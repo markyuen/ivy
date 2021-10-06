@@ -1,5 +1,7 @@
 #lang ivy
 
+include order
+
 module unsigned_bit_vector(bits) = {
     type this
     global {
@@ -16,4 +18,5 @@ object nat = {
     }
     function max2(X:this,Y:this) = Y if X <= Y else X
     function next(X:this) = X + 1
+    instance iter : order_iterator(this)
 }

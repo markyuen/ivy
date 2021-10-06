@@ -925,17 +925,68 @@ module set_wrapper(key) = {
 	>>>
     }
 
-    implement erase(lo:key,hi:key) {
+    implement mem(k:key) returns (res:bool) {
 	<<<
-            `s`.erase(`s`.lower_bound(`lo`),`s`.upper_bound(`hi`));
+	    `res` = `s`.find(`k`) != `s`.end();
 	>>>
     }
 
-    implement get_glb(k:key) returns (res:key) {
+    implement remove(k:key) {
 	<<<
-            `res` = *(--`s`.upper_bound(`k`));
+        `s`.erase(`k`);
+        >>>
+    }
+
+    implement erase(lo:key.iter.t,hi:key.iter.t) {
+	<<<
+
+
+	    if (!`lo`.is_end && (`hi`.is_end || `lo`.val < `hi`.val))
+              `s`.erase(`lo`.is_end ? `s`.end() : `s`.lower_bound(`lo`.val),
+ 	                `hi`.is_end ? `s`.end() : `s`.lower_bound(`hi`.val));
+
+	>>>
+    }
+
+    implement lub(it:key.iter.t) returns (res:key.iter.t) {
+	<<<
+	    if (`it`.is_end) {
+	     	`res`.is_end = true;
+	        `res`.val = 0;
+	    } else {
+		std::set<`key`>::iterator __it = `s`.upper_bound(`it`.val);
+		if (__it == `s`.end()) {
+		    `res`.is_end = true;
+		    `res`.val = 0;
+		} else {
+		    `res`.is_end = false;
+		    `res`.val = *__it;
+		}
+	    }
 	>>>
 	
+    }
+
+    implement glb(it:key.iter.t) returns (res:key.iter.t) {
+	<<<
+	    std::set<`key`>::iterator __it = `it`.is_end ? `s`.end() : `s`.upper_bound(`it`.val);
+	    `res`.is_end = false;
+            `res`.val = *(--__it);
+	>>>
+	
+    }
+
+    implement next(inp:key.iter.t) returns (res:key.iter.t) {
+	<<<
+	    std::set<`key`>::iterator __it = `s`.upper_bound(`inp`.val);
+	    if (__it == `s`.end()) {
+	        `res`.is_end = true;
+	        `res`.val = 0;
+	    } else {
+                `res`.is_end = false;
+	        `res`.val = *__it;
+	    }
+	>>>
     }
 
 
@@ -959,59 +1010,107 @@ module set_wrapper(key) = {
 module ordered_set(key) = {
 
     action insert(nkey:key)
-    action erase(lo:key,hi:key)
-    action get_glb(k:key) returns (res:key)
+    action remove(nkey:key)
+    action mem(nkey:key) returns (res:bool)
+    action erase(lo:key.iter.t,hi:key.iter.t)
+    action glb(it:key.iter.t) returns (res:key.iter.t)
+    action lub(it:key.iter.t) returns (res:key.iter.t)
+    action next(it:key.iter.t) returns (res:key.iter.t)
+    relation contains(K:key)
 
-    relation s(K:key)
+    function gap(k:key.iter.t,m:key.iter.t) =
+              forall L. ~(key.iter.ahead(L,k) & key.iter.done(L,m) & contains(L))
 
-    instantiate succ : map(key,key,0) # ghost
 
+    class iter = {
+        field it : key.iter.t
+        method next returns (self:this) = {
+            self.it := next_int(self.it);
+        }
+        definition (X:this < Y:this) = it(X) < it(Y)
+    }
+
+    action begin returns (res : iter) = {
+        res.it := lub(key.iter.begin);
+    }
+
+    action end returns (res : iter) = {
+        res.it := key.iter.end;
+    }
+    
+    function value(I:iter) = key.iter.val(iter.it(I))
+    
     object spec = {
 	after init {
-            s(K) := K = 0
+            contains(K) := K = 0
         }
+
+	property gap(W,X) & gap(Y,Z) & Y < X -> gap(W,Z)
+	property gap(W,X) & W <= Y & Z <= X -> gap(Y,Z)
+	property gap(K,M) -> ~(key.iter.ahead(L,K) & key.iter.done(L,M) & contains(L))
+
 	# insert one element
 	before insert {
-	    s(nkey) := true;
+	    contains(nkey) := true;
+	}
 
-	    # following is ghost code to update the successor relation
-	    local v:key {
-		if some lub:key. ~(lub <= nkey) & s(lub) minimizing lub {
-		    v := lub
-		}
-		else {
-		    v := 0
-		};
-		call succ.set_(nkey,v)
-	    };
-	    if some glb:key. ~(nkey <= glb) & s(glb) maximizing glb {
-		call succ.lemma(glb); # instantiate succ(glb)
-		call succ.set_(glb,nkey)
+	after insert {
+	    local it:key.iter.t {
+		it := key.iter.create(nkey);
+		assert gap(X,Y) <-> old gap(X,Y) & ~(X < it & it < Y)
 	    }
+	}
+
+	after remove {
+            var it := key.iter.create(nkey);
+	    assert gap(X,Y) <-> (old gap(X,Y)
+	                         | old gap(X,it) & old gap(it,Y) & X < it & it < Y);
 	}
 
 	# erase elements in a closed interval
 	before erase {
-	    s(K) := s(K) & ~(lo <= K & K <= hi)
+	    contains(K) := contains(K) & ~key.iter.between(lo,K,hi);
 	}
 
-	# the the greatest element <= k
-	after get_glb {
-	    if some glb:key. glb <= k & s(glb) maximizing glb {
-		call succ.lemma(glb); # instantiate succ(glb)
-		assume res = glb
-	    }
+	after erase {
+	    assert gap(X,Y) <-> (old gap(X,Y)
+	                         | old gap(X,lo) & old gap(hi,Y)
+                                   & (Y < hi | key.iter.is_end(hi) | ~contains(key.iter.val(hi))))
+	}
+
+        after mem {
+            ensure res <-> contains(nkey);
+        }
+
+	after lub {
+	    assert it <= res;
+	    assert key.iter.between(it,X,res) -> ~contains(X);
+	    assert key.iter.is_end(res) | contains(key.iter.val(res));
+	}
+
+	before glb {
+	    assert exists K. (~key.iter.ahead(K,it) & contains(K))
+	}
+
+	after glb {
+	    assert res <= it & contains(key.iter.val(res));
+	    assert exists U. (gap(res,U) & key.iter.between(res,key.iter.val(it),U))
+	}
+
+	before next {
+	    assert it < key.iter.end
+	}
+
+	after next {
+	    assert it < res & gap(it,res);
+	    assert key.iter.is_end(res) | contains(key.iter.val(res));
 	}
     }
 
-    # Useful invariants of the "succ" relation. The successor of K is
-    # also in the set, and nothing between K and its successor is in
-    # the set. Here, if L = 0 it means K is the maximim element, so we
-    # have to treat this as a special case.
-
-    conjecture s(K) & succ.map(K,L) & L ~= 0 -> ~(L <= K) & s(L)
-    conjecture s(K) & succ.map(K,L) & ~(M <= K) & (L = 0 | ~(L <= M)) -> ~s(M)
-
+        action next_int(it:key.iter.t) returns (it:key.iter.t) =  {
+            it := next(it);
+        }
+        
     instance impl : set_wrapper(key)
 
 }
@@ -1025,21 +1124,21 @@ module map_wrapper(key,value) = {
     >>>
 
     <<< member
-	std::map<`key.t`,`value`> `s`;
+	std::map<`key`,`value`> `s`;
     >>>
 
     <<< init
     >>>
 
-    implement set(x:key.t,y:value) {
+    implement set(x:key,y:value) {
 	<<<
 	    `s`[`x`] = `y`;
 	>>>
     }
 
-    implement get(x:key.t,def:value) returns (y:value) {
+    implement get(x:key,def:value) returns (y:value) {
 	<<<
-	    std::map<`key.t`,`value`>::iterator it = `s`.find(`x`);
+	    std::map<`key`,`value`>::iterator it = `s`.find(`x`);
 	    if (it == `s`.end()) {
 	        `y` = `def`;
 	    } else {
@@ -1059,9 +1158,9 @@ module map_wrapper(key,value) = {
 	>>>
     }
 
-    # implement begin(k:key.t) returns (res:key.iter.t) {
+    # implement begin(k:key) returns (res:key.iter.t) {
     # 	<<<
-    # 	    std::map<`key.t`,`value`>::iterator __it = `s`.lower_bound(`k`);
+    # 	    std::map<`key`,`value`>::iterator __it = `s`.lower_bound(`k`);
     # 	    if (__it == `s`.end()) {
     # 	        `res`.is_end = true;
     # 	        `res`.val = 0;
@@ -1079,7 +1178,7 @@ module map_wrapper(key,value) = {
 	     	`res`.is_end = true;
 	        `res`.val = 0;
 	    } else {
-		std::map<`key.t`,`value`>::iterator __it = `s`.lower_bound(`it`.val);
+		std::map<`key`,`value`>::iterator __it = `s`.upper_bound(`it`.val);
 		if (__it == `s`.end()) {
 		    `res`.is_end = true;
 		    `res`.val = 0;
@@ -1094,7 +1193,7 @@ module map_wrapper(key,value) = {
 
     implement glb(it:key.iter.t) returns (res:key.iter.t) {
 	<<<
-	    std::map<`key.t`,`value`>::iterator __it = `it`.is_end ? `s`.end() : `s`.upper_bound(`it`.val);
+	    std::map<`key`,`value`>::iterator __it = `it`.is_end ? `s`.end() : `s`.upper_bound(`it`.val);
 	    `res`.is_end = false;
             `res`.val = (--__it)->first;
 	>>>
@@ -1103,7 +1202,7 @@ module map_wrapper(key,value) = {
 
     implement next(inp:key.iter.t) returns (res:key.iter.t) {
 	<<<
-	    std::map<`key.t`,`value`>::iterator __it = `s`.upper_bound(`inp`.val);
+	    std::map<`key`,`value`>::iterator __it = `s`.upper_bound(`inp`.val);
 	    if (__it == `s`.end()) {
 	        `res`.is_end = true;
 	        `res`.val = 0;
@@ -1117,7 +1216,7 @@ module map_wrapper(key,value) = {
     action show = {
 	<<<
             std::cout << "{";
-	    for(std::map<`key.t`,`value`>::iterator __it = `s`.begin(), __en = `s`.end(); __it != __en; ++__it)
+	    for(std::map<`key`,`value`>::iterator __it = `s`.begin(), __en = `s`.end(); __it != __en; ++__it)
 	        std::cout << __it->first << ":" << __it->second << ",";
             std::cout << "}" << std::endl;
 	>>>
@@ -1143,13 +1242,13 @@ module map_wrapper(key,value) = {
 module ordered_map(key,value) = {
 
     # set the value of key k
-    action set(nkey:key.t,v:value)
+    action set(nkey:key,v:value)
 
     # is the key present in the map?
-    action present(k:key.t) returns (ans:bool)
+    action present(k:key) returns (ans:bool)
 
     # get the value of key k or zero
-    action get(k:key.t,def:value) returns (v:value)
+    action get(k:key,def:value) returns (v:value)
 
     # remove all leys in range [lo,hi]
     action erase(lo:key.iter.t,hi:key.iter.t)
@@ -1163,8 +1262,8 @@ module ordered_map(key,value) = {
     # iterator least key > iter or end
     action next(it:key.iter.t) returns (res:key.iter.t)
 
-    relation contains(K:key.t)
-    relation maps(K:key.t,V:value)
+    relation contains(K:key)
+    relation maps(K:key,V:value)
 
     function gap(k:key.iter.t,m:key.iter.t) =
               forall L. ~(key.iter.ahead(L,k) & key.iter.done(L,m) & contains(L))
@@ -1258,20 +1357,21 @@ module ordered_map(key,value) = {
     instance impl : map_wrapper(key,value)
 
     trusted isolate iso = impl,spec
-
+    attribute test = impl
+    
 }
 
 
 module ordered_map_impl(key,value) = {
 
     # set the value of key k
-    action set(nkey:key.t,v:value)
+    action set(nkey:key,v:value)
 
     # is the key present in the map?
-    action present(k:key.t) returns (ans:bool)
+    action present(k:key) returns (ans:bool)
 
     # get the value of key k or zero
-    action get(k:key.t,def:value) returns (v:value)
+    action get(k:key,def:value) returns (v:value)
 
     # remove all leys in range [lo,hi]
     action erase(lo:key.iter.t,hi:key.iter.t)

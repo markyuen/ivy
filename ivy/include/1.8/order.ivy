@@ -158,7 +158,7 @@ module bit_vector(length) = {
 module order_iterator(range) = {
     type t = struct {
 	is_end : bool,
-	val : range.t
+	val : range
     }
 
     definition (X < Y) = ~is_end(X) & is_end(Y) 
@@ -169,13 +169,13 @@ module order_iterator(range) = {
     function between(X,V,Y) = ~done(V,X) & done(V,Y)
     function value(X:t) = val(X)
 
-    action create(x:range.t) returns (y:t)
+    action create(x:range) returns (y:t)
     action begin returns (y:t)
     action end returns (y:t)
     
     object spec = {
 
-#	instantiate totally_ordered(range.t)
+#	instantiate totally_ordered(range)
 
 	after create {
 	    assert ~is_end(y);
@@ -214,7 +214,7 @@ module order_iterator(range) = {
 module order_iterator_impl(range) = {
     type t = struct {
 	is_end : bool,
-	val : range.t
+	val : range
     }
 
     definition (X < Y) = ~is_end(X) & is_end(Y) 
@@ -225,7 +225,7 @@ module order_iterator_impl(range) = {
     function between(X,V,Y) = ~done(V,X) & done(V,Y)
     function value(X:t) = val(X)
     
-    action create(x:range.t) returns (y:t)
+    action create(x:range) returns (y:t)
     action begin returns (y:t)
     action end returns (y:t)
     
