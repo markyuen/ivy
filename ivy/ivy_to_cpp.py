@@ -3585,6 +3585,26 @@ def emit_app(self,header,code,capture_args=None):
             code_line(header,y + ' = ' + code_eval(header,self.args[1]))
             code.append('( {} < {} ? 0 : {} - {})'.format(x,y,x,y))
             return
+        if self.func.name == 'cast':
+            if len(self.args) == 1:
+                atype = ctypefull(self.args[0].sort)
+                if atype == 'int':
+                    if isinstance(itp,il.RangeSort):
+                        x = new_temp(header)
+                        code_line(header,x + ' = ' + code_eval(header,self.args[0]))
+                        lb = code_eval(header,itp.lb)
+                        ub = code_eval(header,itp.ub)
+                        code.append('( {} < {} ? {} : {} < {} ? {} : {})'.format(x,lb,lb,ub,x,ub,x))
+                        return
+                    if itp == 'int':
+                        code.append(code_eval(header,self.args[0]))
+                        return
+                    if itp == 'nat':
+                        x = new_temp(header)
+                        code_line(header,x + ' = ' + code_eval(header,self.args[0]))
+                        code.append('( {} < 0 ? 0 : {})'.format(x,x))
+                        return
+            raise iu.IvyError(None,"symbol has no interpretation: {}".format(il.typed_symbol(self.func)))
         if isinstance(itp,il.RangeSort):
             x = new_temp(header)
             code_line(header,x + ' = ' + code_eval(header,self.args[0]) + ' {} '.format(self.func.name) + code_eval(header,self.args[1]))

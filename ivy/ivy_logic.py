@@ -1044,6 +1044,7 @@ polymorphic_symbols_list = [
     ('l2s_saved', [lg.Boolean]),
     ('l2s_d', [alpha, lg.Boolean]),
     ('l2s_a', [alpha, lg.Boolean]),
+    ('cast',[alpha,beta])
 ]
 
 uninterpreted_polymorphic_symbols = set([
