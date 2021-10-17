@@ -1112,6 +1112,8 @@ module ordered_set(key) = {
         }
         
     instance impl : set_wrapper(key)
+    trusted isolate iso = impl,spec
+    attribute test = impl
 
 }
 
