@@ -36,3 +36,6 @@ specs
 
 # These are library directories
 gnutls
+
+# Me
+.idea

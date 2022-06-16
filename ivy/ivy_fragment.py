@@ -84,7 +84,7 @@ from ivy_union_find import *
 # even number, one for an odd number and None if the formula occurs
 # under both an even number and an odd number of negations.
 
-def map_fmla(lineno,fmla,pol):
+def map_fmla(lineno,fmla,pol,orig):
     """ Add all of the subterms of `fmla` to the stratification graph. """
 
     global universally_quantified_variables
@@ -96,7 +96,7 @@ def map_fmla(lineno,fmla,pol):
     global arcs
 
     if il.is_binder(fmla):
-        return map_fmla(lineno,fmla.body,pol)
+        return map_fmla(lineno,fmla.body,pol,orig)
     if il.is_variable(fmla):
         if fmla in universally_quantified_variables:
             if fmla not in strat_map:
@@ -106,7 +106,7 @@ def map_fmla(lineno,fmla,pol):
             return strat_map[fmla],set()
         node,vs = macro_var_map.get(fmla,None), macro_dep_map.get(fmla,set())
         return node,vs
-    reses = [map_fmla(lineno,f,il.polar(fmla,pos,pol)) for pos,f in enumerate(fmla.args)]
+    reses = [map_fmla(lineno,f,il.polar(fmla,pos,pol),orig) for pos,f in enumerate(fmla.args)]
     nodes,uvs = iu.unzip_pairs(reses)
     all_uvs = iu.union_of_list(uvs)
     all_uvs.update(n for n in nodes if n is not None)
@@ -116,7 +116,7 @@ def map_fmla(lineno,fmla,pol):
             for x,uv in zip(nodes,uvs):
                 if x is not None:
                     unify(x,S_sigma)
-                arcs.extend((v,S_sigma,fmla,lineno) for v in uv)
+                arcs.extend((v,S_sigma,fmla,lineno,"NA",orig) for v in uv)
         else:
             check_interpreted(fmla,nodes,uvs,lineno,pol)
         return None,all_uvs 
@@ -137,14 +137,14 @@ def map_fmla(lineno,fmla,pol):
                 return macro_value_map[func]
             if func in macro_map:
                 defn,lf = macro_map[func]
-                res = map_fmla(lf.lineno,defn.rhs(),None)
+                res = map_fmla(lf.lineno,defn.rhs(),None,orig)
                 macro_value_map[func] = res
                 return res
             for idx,node in enumerate(nodes):
                 anode = strat_map[(func,idx)]
                 if node is not None:
                     unify(anode,node)
-                arcs.extend((v,anode,fmla,lineno,idx) for v in uvs[idx])
+                arcs.extend((v,anode,fmla,lineno,idx,orig) for v in uvs[idx])
         else:
             check_interpreted(fmla,nodes,uvs,lineno,pol)
         return None,all_uvs
@@ -373,27 +373,431 @@ def create_strat_map(assumes,asserts,macros):
     # here, because these are 'inlined' by `map_fmla`.
 
     for pair in assumes+asserts:
-        map_fmla(pair[1].lineno,pair[0],0)
+        map_fmla(pair[1].lineno,pair[0],0,il.close_formula(pair[0]))
 
-#    show_strat_graph(strat_map,arcs)
+    show_strat_graph(strat_map,arcs) #####
+
+
+###############################################################
 
 # Show a stratification graph. This is just for debugging.
 
 def show_strat_graph(m,a):
+    print 'universally_quantified_variables : {}\n'.format(sorted([str(v) for v in universally_quantified_variables]))
+
+    print 'macro_var_map: {'
+    for x,y in macro_var_map.iteritems():
+        print '\t{} -> {}'.format(x,y)
+    print '}'
+    print 'macro_dep_map: {'
+    for x,y in macro_dep_map.iteritems():
+        print '\t{} -> {}'.format(x,y)
+    print '}'
+    print 'macro_map: {'
+    for x,y in macro_map.iteritems():
+        print '\t{} -> {}'.format(x,y)
+    print '}\n'
+
+    print 'skolem_map: {'
+    for x,y in skolem_map.iteritems():
+        print '\t{} -> {}'.format(x,y)
+    print '}\n'
+
+    nodes = set()
+    topr = []
     print 'nodes = {'
     for x,y in m.iteritems():
         z = find(y)
+        nodes.add(z)
         if isinstance(x,tuple):
-            print '({},{}) : {} -> {}'.format(x[0],x[1],y,z)
+            topr.append('\t({}  |  {}) : {} -> {}'.format(x[0],x[1],y,z))
         else:
-            print '{} : {} -> {}'.format(x,y,z)
-    print '}'
+            topr.append('\t{} : {} -> {}'.format(x,y,z))
+    for n in sorted(topr):
+        print n
+    print "}"
+    nodes = sorted(nodes, key=lambda x : x.id)
+    nodespr = [str(x.id) + ": " + str(get_node_sort(x)) for x in nodes]
+    print 'UFNodes = ['
+    for n in nodespr:
+        print "\t" + n
+    print "]"
+    g = {u: set() for u in nodes}
+    arc_fmlas = defaultdict(set)
     print 'arcs = {'
     for arc in a:
-        print '(' + ','.join(str(x) for x in arc) + ')'
-    print '}'
-    
-        
+        u = find(arc[0])
+        v = find(arc[1])
+        g[u].add(v)
+        arc_fmlas[v].add(tuple(arc[2:]))
+        print '\t({}:{} -> {}:{})\t'.format(u, get_node_sort(arc[0]), v, get_node_sort(arc[1])) + '(' + '  |  '.join(str(x) for x in arc[2:]) + ')'
+    print '}\n'
+    from johnson import simple_cycles
+    cycles = list(simple_cycles(g))
+    print(cycles)
+    cycled_nodes = set(flatten(cycles))
+    fmlas_to_check = {}
+    for k in arc_fmlas:
+        if k in cycled_nodes:
+            print "to " + str(k.id) + ":" + str(get_node_sort(k)) + " = ["
+            for f in arc_fmlas[k]:
+                print "\t{}  |  line {}  |  {}".format(f[0], f[1].line, f[2])
+                if not f[3] in fmlas_to_check:
+                    fmlas_to_check[f[3]] = (f[1].line, set())
+                fmlas_to_check[f[3]][1].add(get_node_sort(k).name)
+            print "]"
+    print "\nderived relations = ["
+    sr = static_relations()
+    ier = init_empty_relations()
+    for k, v in fmlas_to_check.items():
+        print "\n\tline {}  |  {}  |  {}".format(v[0], v[1], k)
+        derived_relation(k, set(), sr, v[1])
+    print "]"
+
+def derived_relation(fmla, univs, sr, terminals):
+    if il.is_forall(fmla):
+        univs = univs.union(set([v for v in fmla.variables]))
+    else:
+        if not [v for v in ilu.variables_ast(fmla) if v in univs]:
+            univs = set()
+    if il.is_exists(fmla):
+        exs = set([v for v in fmla.variables])
+        # this can be relaxed -- only the candidate phi needs to be qf
+        if il.is_qf(fmla.body) and univs:
+            derived_relation_aux(fmla.body, univs, exs, sr, terminals)
+    for f in fmla.args:
+        derived_relation(f, univs, sr, terminals)
+
+def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, terminals):
+    literals = set(literals_ast(arg_fmla))
+    positive_literals = set([f for f in literals if not isinstance(f, il.Not)])
+    static_literals = set([f for f in literals if literal_func(f) in sr])
+    tcf = top_conj_fmlas(arg_fmla)
+    # the derived relation candidate must be positive, cannot be an axiom, must be a top-level conj, must initially be empty
+    potential_ps = [x for x in positive_literals - static_literals if x in tcf]
+    # phi can only contain static relations
+    base_phis = [f for f in tcf if reduce(lambda x, y : x and y in static_literals, literals_ast(f), True)]
+    potential_phis = [reduce(lambda x, y : il.And(x, y), l) for l in permute(base_phis)]
+    # generate all possible quantifiers
+    # There can be multiple quantifier choices here because ex variables under p
+    # can be universal. That being said, ex cannot be empty. A greedy approach to
+    # this is to remove as many ex vars as possible (i.e., make the ex set as large
+    # as possible). As an optimization, we can de-prioritize psis which transfer
+    # sorts to univs that still need to be maintained in the formula (for other
+    # relations). We might look to discard these entirely, but there might be a
+    # chance that with the derived relation the equivalence class of that instance
+    # actually becomes stratified. We can also discard psis with ex vars that do
+    # not address the cycles they contribute to (by comaparing the ex vars to
+    # the terminals of the formula's arcs) -- this might be particularly common
+    # when the negative version of an invariant invokes a cycle.
+    # To gen quantifiers:
+    #   - all ex vars under phi must appear in p as well (?) -- not enforced currently
+    #   - can phi contain local vars -> psi univs? -- not allowed currently
+    #   - psi_univs contains all univs under phi and p and any local vars under p
+    #   - psi_exs begins with all other vars, reduces down till only a single var
+    # TODO discard other useless options, such as those that coincide with an edge from an axiom
+    potential_psis = []
+    def add_psi(univs, us, ps, exs, phi, p):
+        psi_univs = univs.union(us).union(ps)
+        psi_exs = exs - us
+        flag1 = psi_univs != set() # a derived relation is formable
+        flag2 = len(terminals - set([v.sort.name for v in psi_exs])) < len(terminals) # addresses a cycle
+        if flag1 and flag2:
+            # generate arity mapping for update code
+            psi_umap = {}
+            i = 0
+            for v in psi_univs:
+                psi_umap[v] = i
+                i += 1
+            p_map = {}
+            i = 0
+            for v in p.terms:
+                p_map[v] = i
+                i += 1
+            # map phi [i -> (origin, j)]:
+            # index i of phi is taken from index j from origin p or psi
+            gen_phi_map = []
+            for v in ilu.variables_ast(phi):
+                if v in psi_umap:
+                    gen_phi_map.append(("PSI", psi_umap[v]))
+                elif v in p_map:
+                    gen_phi_map.append(("P", p_map[v]))
+                else:
+                    assert False
+            # map dr update [i -> j]:
+            # index i of dr is updated using index j of p (i.e., U_i = p_j)
+            gen_dr_update_map = [p_map.get(v, None) for v in psi_univs]
+            potential_psis.append((psi_univs, psi_exs, phi, p, gen_phi_map, gen_dr_update_map))
+    for p in potential_ps:
+        p_vars = set([v for v in ilu.variables_ast(p)])
+        p_univs = set([v for v in p_vars if v in arg_univs])
+        p_exs = set([v for v in p_vars if v in arg_exs])
+        p_locals = set([c for c in ilu.constants_ast(p)])
+        # consider a vacuous phi
+        # moving no vars
+        add_psi(p_univs, set(), p_locals, p_exs, il.And(), p)
+        # moving n-1 ex vars
+        ex_to_univ = [set(x) for x in permute(p_exs) if len(x) < len(p_exs)]
+        for us in ex_to_univ:
+            add_psi(p_univs, us, p_locals, p_exs, il.And(), p)
+        # non-empty phis
+        for phi in potential_phis:
+            phi_vars = set([v for v in ilu.variables_ast(phi)])
+            phi_univs = set([v for v in phi_vars if v in arg_univs])
+            phi_exs = set([v for v in phi_vars if v in arg_exs])
+            phi_locals = set([c for c in ilu.constants_ast(phi)])
+            all_univs = phi_univs.union(p_univs)
+            all_exs = phi_exs.union(p_exs)
+            # moving no vars
+            add_psi(all_univs, set(), p_locals, all_exs, phi, p)
+            # moving n-1 ex vars
+            ex_to_univ = [set(x) for x in permute(all_exs) if len(x) < len(all_exs)]
+            for us in ex_to_univ:
+                add_psi(all_univs, us, p_locals, all_exs, phi, p)
+    # generate update code for insertion of a single element
+    # An update on p would alter some (potentiallly none) univ vars and all ex vars.
+    # Given p(a, b, c) := true, we allow updates of p(a, b, c) := true (i.e., a single
+    # update), where a, b, and c are not quantified. Given psi univ vars of A and B, we
+    # would update psi like so: psi(A, B) := psi(A, B) | (phi & A = a & B = b) -- in
+    # other words, we only update the relevant derived relation. phi may depend on A, B,
+    # and/or c -- that is fine, just inline c when needed (the univ vars would already
+    # be properly placed). Note that under certain conditions multiple updates can be
+    # allowed. Specifically, if an ex var under p and psi and NOT under phi is mass
+    # updated (i.e., applied over the sort), then this does not change the update code --
+    # intuitively, this derived relation is still coherent since that var falls under
+    # an ex quant, so an instance still exists. Additionally, a univ var can also be
+    # mass updated -- this is the same as just applying the update across all instances
+    # of the derived relation. The only case where vars under p CANNOT be mass updated
+    # is when an ex var under p also appears under psi and phi.
+    # To gen update:
+    #   - check that the lhs of the stmt is in psi
+    #   - check that the rhs of the update is `true`
+    #   - extract all vars under p
+    #   - verify that no capitalized ex vars under p appear in phi (through arity location of the var)
+    #   - gen `psi(X) := psi(X) | (phi & X1 = x1 & X2 = x2 ...)` for each ex quant x under p (do not include vars not in psi univs)
+    # init and example of single update
+    for i, psi in enumerate(potential_psis):
+        DERIVED_RELATION_NAME = "dr"
+        univs, exs, phi, p, gen_phi_map, gen_dr_update_map = psi
+        # init: dr(X) := false
+        j = 65
+        init_vars = []
+        for _ in range(len(univs)): # TODO what if more than 26 vars...
+            init_vars.append(chr(j))
+            j += 1
+        declaration = "{}({})".format(DERIVED_RELATION_NAME, ", ".join(["{}:{}".format(x, y.sort.name) for x, y in zip(init_vars, univs)]))
+        init = "{}({}) := false;".format(DERIVED_RELATION_NAME, ", ".join(init_vars))
+        # single update example: p(x) := true
+        # gen sample AssignAction stmt
+        aa = gen_single_update_stmt(exs, phi, p)
+        # parse assignment
+        parsed_dr, parsed_terms = parse_single_update_stmt(aa)
+        # gen update code
+        assert parsed_dr in set(p) # TODO later
+        update_code = "{}({})".format(DERIVED_RELATION_NAME, ", ".join(init_vars))
+        update_code += " := {} | (".format(update_code)
+        # add conditional univ updates
+        for j, idx in enumerate(gen_dr_update_map):
+            if idx is not None:
+                update_code += "{} = {} & ".format(init_vars[j], parsed_terms[idx])
+        # add phi last for neater formatting
+        if phi == il.And():
+            update_code += "true);"
+        else:
+            # complete phi map by mapping to actual names now
+            phi_map = []
+            for origin, idx in gen_phi_map:
+                if origin == "PSI":
+                    phi_map.append(init_vars[idx])
+                elif origin == "P":
+                    phi_map.append(parsed_terms[idx].name)
+                else:
+                    assert False
+            update_code += str(gen_phi(phi, phi_map)).replace(",", ", ") + ");"
+        update = (aa, update_code)
+        # gen repr inv
+        repr_inv = "{}({}) <-> ".format(DERIVED_RELATION_NAME, ", ".join(init_vars))
+        ri_vars = []
+        ri_p_vars = []
+        j = 65 + len(univs)
+        univs_l = list(univs)
+        for v in p.terms:
+            if v in exs:
+                ri_vars.append(chr(j))
+                ri_p_vars.append(chr(j))
+                j += 1
+            else:
+                ri_p_vars.append(init_vars[univs_l.index(v)])
+        if ri_vars:
+            repr_inv += "exists {}. ".format(", ".join(ri_vars))
+        repr_inv += "{}({})".format(p.func, ", ".join(ri_p_vars))
+        potential_psis[i] = (univs, exs, phi, p, gen_phi_map, gen_dr_update_map, declaration, init, update, repr_inv)
+
+    # for example
+    # print im.module.actions["aaa"] #ivy1.6
+    # print im.module.actions["bbb"] #ivy1.7
+    # print type(im.module.actions["bbb"].args[1].args[2].args[1].args[0].terms[3])
+
+    # TODO support removal of elements
+
+    if potential_psis:
+        print "\tuniv vars: " + str([str(v) for v in arg_univs])
+        print "\tex vars: " + str([str(v) for v in arg_exs])
+        print "\texistential formula: " + str(arg_fmla)
+        print "\tliterals: " + str([str(l) for l in literals])
+        print "\tpositive literals: " + str([str(l) for l in positive_literals])
+        print "\tstatic literals: " + str([str(l) for l in static_literals])
+        print "\ttop-level conjs: " + str([str(l) for l in tcf])
+        print "\tpotential ps: " + str([str(l) for l in potential_ps])
+        print "\tpotential phis: " + str([str(l) for l in potential_phis])
+        print "\tpotential psis: ["
+        for l in potential_psis:
+            print "\t\tunivs: {}  |  exs: {}".format(", ".join(map(lambda x : str(x), l[0])), ", ".join(map(lambda x : str(x), l[1])))
+            print "\t\tphi: {}  |  p: {}".format(l[2], l[3])
+            print "\t\tphi_mp: {}  |  dr_up_mp: {}".format(l[4], l[5])
+            print "\t\tdeclaration: {}  |  init: {}".format(l[6], l[7])
+            print "\t\tupdate: {} -> {}".format(l[8][0], l[8][1])
+            print "\t\trepr inv: {}".format(l[9])
+            print ""
+        print "\t]"
+        init_empty_relations()
+
+def gen_phi(fmla, mp):
+    import logic as ll
+    def aux(fmla):
+        if isinstance(fmla, il.And):
+            l, r = fmla.args
+            lhs = aux(l)
+            rhs = aux(r)
+            return il.And(lhs, rhs)
+        if isinstance(fmla, il.Or):
+            l, r = fmla.args
+            lhs = aux(l)
+            rhs = aux(r)
+            return il.Or(lhs, rhs)
+        if isinstance(fmla, ll.Eq):
+            lhs = aux(fmla.t1)
+            rhs = aux(fmla.t2)
+            return ll.Eq(lhs, rhs)
+        if isinstance(fmla, il.Not):
+            body = fmla.args[0]
+            return il.Not(aux(body))
+        if isinstance(fmla, il.App):
+            nt = []
+            for t in fmla.terms:
+                name = mp[aux.ctr]
+                if name.isupper():
+                    nt.append(ll.Var(name, t.sort))
+                else:
+                    nt.append(ll.Const(name, t.sort))
+                aux.ctr += 1
+            return il.App(fmla.func, *nt)
+        if isinstance(fmla, ll.Var) or isinstance(fmla, ll.Const):
+            name = mp[aux.ctr]
+            if name.isupper():
+                return ll.Var(name, fmla.sort)
+            else:
+                return ll.Const(name, fmla.sort)
+        print type(fmla)
+        assert False
+    aux.ctr = 0
+    return aux(fmla)
+
+def gen_single_update_stmt(exs, phi, p):
+    import logic as ll
+    j = 97
+    aa_terms = []
+    for k in range(len(p.terms)):
+        aa_terms.append(ll.Const(chr(j), p.terms[k].sort))
+        j += 1
+    aa = ia.AssignAction(ll.Apply(p.func, *aa_terms), il.And())
+    p_terms_is_ex = [t in exs for t in p.terms]
+    for j, t in enumerate(aa.args[0].terms):
+        is_mass_update = t.name[0].isupper()
+        is_ex_in_p = p_terms_is_ex[j]
+        is_in_phi = p.terms[j] in [v for v in ilu.variables_ast(phi)]
+        if is_mass_update and is_ex_in_p and is_in_phi:
+            raise Exception("Update not allowed: {}  |  {}: {}".format(aa, j, t))
+    return aa
+
+def parse_single_update_stmt(aa):
+    assert isinstance(aa, ia.AssignAction) # must be assignment
+    assert aa.args[1] == il.And() # rhs must be `true`
+    return aa.args[0][0], tuple(aa.args[0][1:])
+
+def permute(it):
+    from itertools import combinations
+    return sum([map(list, combinations(it, i)) for i in range(1, len(it) + 1)], [])
+
+def top_conj_fmlas(fmla):
+    conjs = set()
+    def aux(fmla):
+        if isinstance(fmla, il.And):
+            # And is left assoc
+            l, r = fmla.args
+            if isinstance(r, il.And):
+                # but there may be unnecessary brackets on the right surrounding an And
+                aux(r)
+            else:
+                conjs.add(r)
+            aux(l)
+        else:
+            conjs.add(fmla)
+    aux(fmla)
+    return conjs
+
+def init_empty_relations():
+    # TODO ensure derived relation candidates are initialized to be empty
+    all_rels = set()
+    empty_rels = set()
+    # print len(im.module.initial_actions) # for ivy1.7, can have multiple init blocks, ivy_action sequence object
+    for ldf in im.module.labeled_inits: # for ivy1.6
+        if not ldf.temporal:
+            # print 'init: {}'.format(ldf.formula)
+            pass
+
+def static_relations():
+    rels = set("=")
+    for ldf in im.module.labeled_axioms:
+        if not ldf.temporal:
+            # print 'axiom: {}'.format(ldf.formula)
+            for f in literals_ast(ldf.formula):
+                rels.add(literal_func(f))
+    return rels
+
+def literals_ast(ast):
+    if is_literal(ast):
+        yield ast
+        if isinstance(ast, il.Not):
+            return
+    for arg in ast.args:
+        for x in literals_ast(arg):
+            yield x
+
+def is_literal(term):
+    import logic as ll
+    return (
+        isinstance(term, il.Not) and is_literal(term.body) or
+        isinstance(term, il.App) or
+        isinstance(term, ll.Eq) and is_literal(term.t1) and is_literal(term.t2)
+    )
+
+def literal_func(lit):
+    import logic as ll
+    if isinstance(lit, il.Not):
+        return literal_func(lit.body)
+    else:
+        if isinstance(lit, ll.Eq):
+            return "="
+        else:
+            return lit.func
+
+def flatten(l):
+    return [x for xs in l for x in xs]
+
+
+###############################################################
+
 def report_feu_error(text):
     raise iu.IvyError(None,"The verification condition is not in the fragment FAU.\n\n{}".format(text))
 
