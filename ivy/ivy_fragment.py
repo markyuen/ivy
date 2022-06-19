@@ -630,8 +630,30 @@ def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, terminals):
                 ri_p_vars.append(init_vars[univs_l.index(v)])
         if ri_vars:
             repr_inv += "exists {}. ".format(", ".join(ri_vars))
+        # add phi
+        ri_phi = None
+        if phi != il.And():
+            phi_map = []
+            for origin, idx in gen_phi_map:
+                if origin == "PSI":
+                    phi_map.append(init_vars[idx])
+                elif origin == "P":
+                    phi_map.append(ri_p_vars[idx])
+                else:
+                    assert False
+            ri_phi = str(gen_phi(phi, phi_map)).replace(",", ", ")
+            repr_inv += "{} & ".format(ri_phi)
         repr_inv += "{}({})".format(p.func, ", ".join(ri_p_vars))
-        potential_psis[i] = (univs, exs, phi, p, gen_phi_map, gen_dr_update_map, declaration, init, update, repr_inv)
+        # gen univ repr inv
+        univ_repr_inv = "{}({})".format(DERIVED_RELATION_NAME, ", ".join(init_vars))
+        univ_repr_inv = None
+        if ri_vars:
+            if ri_phi:
+                univ_repr_inv = ri_phi + " & "
+            univ_repr_inv += "{}({}) -> {}({})".format(p.func, ", ".join(ri_p_vars), DERIVED_RELATION_NAME, ", ".join(init_vars))
+        else:
+            univ_repr_inv = repr_inv
+        potential_psis[i] = (univs, exs, phi, p, gen_phi_map, gen_dr_update_map, declaration, init, update, repr_inv, univ_repr_inv)
 
     # for example
     # print im.module.actions["aaa"] #ivy1.6
@@ -658,6 +680,7 @@ def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, terminals):
             print "\t\tdeclaration: {}  |  init: {}".format(l[6], l[7])
             print "\t\tupdate: {} -> {}".format(l[8][0], l[8][1])
             print "\t\trepr inv: {}".format(l[9])
+            print "\t\tuniv repr inv: {}".format(l[10])
             print ""
         print "\t]"
         init_empty_relations()
