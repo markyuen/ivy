@@ -1,3 +1,4 @@
+import logic as ll
 import ivy_actions as ia
 import ivy_module as im
 import ivy_logic as il
@@ -9,6 +10,7 @@ from collections import defaultdict
 from tarjan import tarjan
 from itertools import chain
 from ivy_union_find import *
+from johnson import simple_cycles
 
 # Here we have rules for checking that VC's are in
 # a decidable fragment
@@ -23,12 +25,12 @@ from ivy_union_find import *
 # universally quantified variable, `f` is an uninterpreted symbol and
 # `j` is an argument position of `f` (since variable names are
 # globally unique, we don't identify variable occurrences by a pair
-# `k,i` as in the paper). 
+# `k,i` as in the paper).
 #
 # Nodes `S_v` and `A_f,j` are unified (using union-find) when `v`
 # occurs as the `jth` argument of `f`.  An arc occurs in the graph from `S_v`
 # to `A_f,j` when some term containing `S_v` *not* at top level occurs
-# as the the `jth` argument of `f`. 
+# as the the `jth` argument of `f`.
 #
 # The formula is in the finite essentially uninterpreted fragment
 # (FEU) iff this graph is acyclic.
@@ -49,7 +51,7 @@ from ivy_union_find import *
 #    | v:s                    | S_s = S_v      |
 #    | t[v]:s                 | S_v --> S_s    |
 #
-# Here, `S_s` is a special set of relevant terms associated with sort `s`. 
+# Here, `S_s` is a special set of relevant terms associated with sort `s`.
 # This sort is represented in `strat_map` by a fake symbol '=' of sort `s`.
 #
 # We drop the constraint that `A_f,i = S_s` when `dom_f,j = s` from
@@ -60,7 +62,7 @@ from ivy_union_find import *
 # and the constraint `forall v,w. (c -> f(v,w) = t1[v]) & (~c -> f(v,w) = t2[w]`.
 
 # We treat quantifier alternations as if the were skolemized. That is, if
-# we have `exists w. t[v,w]` we treat it as `t<f(v)/w>`. 
+# we have `exists w. t[v,w]` we treat it as `t<f(v)/w>`.
 
 # The return value of `map_fmla` is a pair `(v,uvs)` where:
 #
@@ -119,10 +121,10 @@ def map_fmla(lineno,fmla,pol,orig):
                 arcs.extend((v,S_sigma,fmla,lineno,"NA",orig) for v in uv)
         else:
             check_interpreted(fmla,nodes,uvs,lineno,pol)
-        return None,all_uvs 
+        return None,all_uvs
     if il.is_ite(fmla):
         # S_sigma = strat_map[il.Symbol('=',fmla.args[1])]
-        # for x,uv in zip(nodes[1:],uvs[1:]): 
+        # for x,uv in zip(nodes[1:],uvs[1:]):
         #     if x is not None:
         #         unify(x,S_sigma)
         #     arcs.extend((v,S_sigma,fmla,lineno) for v in uv)
@@ -149,11 +151,11 @@ def map_fmla(lineno,fmla,pol,orig):
             check_interpreted(fmla,nodes,uvs,lineno,pol)
         return None,all_uvs
     return None,all_uvs
-                
+
 # An interpreted symbol over a variable puts us outside the FEU
 # fragment. However, the FAU fragment allows "arithmetic literals"
 # of the form X = t, X < Y, X < t, t < X, where t is a ground term and
-# the arguments are of integer sort. 
+# the arguments are of integer sort.
 #
 # Check that a given application of a symbol does not violate this
 # rule. Takes the map_fmla results for the symbol arguments, and the
@@ -180,7 +182,7 @@ def is_arithmetic_literal(app,pos,nodes,uvs,pol):
     whether `app` is an arithmetic literal.
 
     As a side effect, if both arguments of an arithmetic literal are universals,
-    we unify them (per the rule in seciont 4 of ibid). 
+    we unify them (per the rule in seciont 4 of ibid).
     """
 
     if ((il.is_inequality_symbol(app.rep) or il.is_eq(app))
@@ -210,7 +212,7 @@ def is_arithmetic_literal(app,pos,nodes,uvs,pol):
 # - macro_var_map stores, for each macro parameter the universal
 #   variables that are substituted *exactly* for the parameter, that is,
 #   as the top-level symbol. The set of universal variables is unified
-#   in the stratification map and represented by a single element. 
+#   in the stratification map and represented by a single element.
 #
 # These sets have to be propagated downward from calling to called
 # macros, so we travese the list of macros in reverse order.
@@ -285,7 +287,7 @@ def create_macro_maps(assumes,asserts,macros):
 # equivalent to add `w -> v` to `macro_dep_map`. The following
 # procedure does this for a given formula.
 #
-# skolem_map maps existential variables to the terms that bind them. 
+# skolem_map maps existential variables to the terms that bind them.
 
 skolem_map = {}
 
@@ -353,7 +355,7 @@ def create_strat_map(assumes,asserts,macros):
                 universally_quantified_variables[v] = lf
 
     # print 'universally_quantified_variables : {}'.format([str(v) for v in universally_quantified_variables])
-    
+
     # Create an empty graph.
 
     strat_map = defaultdict(UFNode)
@@ -422,6 +424,7 @@ def show_strat_graph(m,a):
     for n in nodespr:
         print "\t" + n
     print "]"
+
     g = {u: set() for u in nodes}
     arc_fmlas = defaultdict(set)
     print 'arcs = {'
@@ -432,7 +435,7 @@ def show_strat_graph(m,a):
         arc_fmlas[v].add(tuple(arc[2:]))
         print '\t({}:{} -> {}:{})\t'.format(u, get_node_sort(arc[0]), v, get_node_sort(arc[1])) + '(' + '  |  '.join(str(x) for x in arc[2:]) + ')'
     print '}\n'
-    from johnson import simple_cycles
+
     cycles = list(simple_cycles(g))
     print(cycles)
     cycled_nodes = set(flatten(cycles))
@@ -442,7 +445,7 @@ def show_strat_graph(m,a):
             print "to " + str(k.id) + ":" + str(get_node_sort(k)) + " = ["
             for f in arc_fmlas[k]:
                 print "\t{}  |  line {}  |  {}".format(f[0], f[1].line, f[2])
-                if not f[3] in fmlas_to_check:
+                if f[3] not in fmlas_to_check:
                     fmlas_to_check[f[3]] = (f[1].line, set())
                 fmlas_to_check[f[3]][1].add(get_node_sort(k).name)
             print "]"
@@ -458,11 +461,12 @@ def derived_relation(fmla, univs, sr, terminals):
     if il.is_forall(fmla):
         univs = univs.union(set([v for v in fmla.variables]))
     else:
+        # if no univs are used, then clear the univs set
         if not [v for v in ilu.variables_ast(fmla) if v in univs]:
             univs = set()
     if il.is_exists(fmla):
         exs = set([v for v in fmla.variables])
-        # this can be relaxed -- only the candidate phi needs to be qf
+        # TODO this can be relaxed -- only the candidate phi needs to be qf
         if il.is_qf(fmla.body) and univs:
             derived_relation_aux(fmla.body, univs, exs, sr, terminals)
     for f in fmla.args:
@@ -470,14 +474,14 @@ def derived_relation(fmla, univs, sr, terminals):
 
 def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, terminals):
     literals = set(literals_ast(arg_fmla))
-    positive_literals = set([f for f in literals if not isinstance(f, il.Not)])
+    positive_literals = set([f for f in literals if not isinstance(f, ll.Not)])
     static_literals = set([f for f in literals if literal_func(f) in sr])
     tcf = top_conj_fmlas(arg_fmla)
     # the derived relation candidate must be positive, cannot be an axiom, must be a top-level conj, must initially be empty
     potential_ps = [x for x in positive_literals - static_literals if x in tcf]
     # phi can only contain static relations
-    base_phis = [f for f in tcf if reduce(lambda x, y : x and y in static_literals, literals_ast(f), True)]
-    potential_phis = [reduce(lambda x, y : il.And(x, y), l) for l in permute(base_phis)]
+    base_phis = [f for f in tcf if all(l in static_literals for l in literals_ast(f))]
+    potential_phis = [reduce(lambda x, y : ll.And(x, y), l) for l in permute(base_phis)]
     # generate all possible quantifiers
     # There can be multiple quantifier choices here because ex variables under p
     # can be universal. That being said, ex cannot be empty. A greedy approach to
@@ -498,32 +502,22 @@ def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, terminals):
     # TODO discard other useless options, such as those that coincide with an edge from an axiom
     potential_psis = []
     def add_psi(univs, us, ps, exs, phi, p):
-        psi_univs = univs.union(us).union(ps)
+        psi_univs = list(univs.union(us).union(ps))
         psi_exs = exs - us
-        flag1 = psi_univs != set() # a derived relation is formable
+        flag1 = psi_univs # a derived relation is formable
         flag2 = len(terminals - set([v.sort.name for v in psi_exs])) < len(terminals) # addresses a cycle
         if flag1 and flag2:
             # generate arity mapping for update code
-            psi_umap = {}
-            i = 0
-            for v in psi_univs:
-                psi_umap[v] = i
-                i += 1
-            p_map = {}
-            i = 0
-            for v in p.terms:
-                p_map[v] = i
-                i += 1
+            psi_umap = {v: i for i, v in enumerate(psi_univs)}
+            p_map = {v: i for i, v in enumerate(p.terms)}
             # map phi [i -> (origin, j)]:
             # index i of phi is taken from index j from origin p or psi
             gen_phi_map = []
             for v in ilu.variables_ast(phi):
                 if v in psi_umap:
                     gen_phi_map.append(("PSI", psi_umap[v]))
-                elif v in p_map:
-                    gen_phi_map.append(("P", p_map[v]))
                 else:
-                    assert False
+                    gen_phi_map.append(("P", p_map[v]))
             # map dr update [i -> j]:
             # index i of dr is updated using index j of p (i.e., U_i = p_j)
             gen_dr_update_map = [p_map.get(v, None) for v in psi_univs]
@@ -535,11 +529,11 @@ def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, terminals):
         p_locals = set([c for c in ilu.constants_ast(p)])
         # consider a vacuous phi
         # moving no vars
-        add_psi(p_univs, set(), p_locals, p_exs, il.And(), p)
+        add_psi(p_univs, set(), p_locals, p_exs, ll.And(), p)
         # moving n-1 ex vars
         ex_to_univ = [set(x) for x in permute(p_exs) if len(x) < len(p_exs)]
         for us in ex_to_univ:
-            add_psi(p_univs, us, p_locals, p_exs, il.And(), p)
+            add_psi(p_univs, us, p_locals, p_exs, ll.And(), p)
         # non-empty phis
         for phi in potential_phis:
             phi_vars = set([v for v in ilu.variables_ast(phi)])
@@ -585,75 +579,70 @@ def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, terminals):
         for _ in range(len(univs)): # TODO what if more than 26 vars...
             init_vars.append(chr(j))
             j += 1
-        declaration = "{}({})".format(DERIVED_RELATION_NAME, ", ".join(["{}:{}".format(x, y.sort.name) for x, y in zip(init_vars, univs)]))
-        init = "{}({}) := false;".format(DERIVED_RELATION_NAME, ", ".join(init_vars))
+        dr_sort = ll.FunctionSort(*([u.sort for u in univs] + [ll.Boolean]))
+        declaration_ast = ll.Const(DERIVED_RELATION_NAME, dr_sort)
+        dr_terms = [ll.Const(init_vars[k], univs[k].sort) for k in range(len(univs))]
+        dr_ast = ll.Apply(declaration_ast, *dr_terms)
+        init_ast = ia.AssignAction(dr_ast, ll.Or())
         # single update example: p(x) := true
         # gen sample AssignAction stmt
         aa = gen_single_update_stmt(exs, phi, p)
         # parse assignment
-        parsed_dr, parsed_terms = parse_single_update_stmt(aa)
+        parsed_p_name, parsed_terms = parse_single_update_stmt(aa)
         # gen update code
-        assert parsed_dr in set(p) # TODO later
-        update_code = "{}({})".format(DERIVED_RELATION_NAME, ", ".join(init_vars))
-        update_code += " := {} | (".format(update_code)
-        # add conditional univ updates
-        for j, idx in enumerate(gen_dr_update_map):
-            if idx is not None:
-                update_code += "{} = {} & ".format(init_vars[j], parsed_terms[idx])
-        # add phi last for neater formatting
-        if phi == il.And():
-            update_code += "true);"
+        assert parsed_p_name in set(p) # TODO later
+        update_conds = []
+        # add phi condition
+        if phi == ll.And():
+            update_conds.append(ll.And())
         else:
             # complete phi map by mapping to actual names now
             phi_map = []
             for origin, idx in gen_phi_map:
                 if origin == "PSI":
-                    phi_map.append(init_vars[idx])
-                elif origin == "P":
-                    phi_map.append(parsed_terms[idx].name)
+                    phi_map.append(dr_terms[idx].name)
                 else:
-                    assert False
-            update_code += str(gen_phi(phi, phi_map)).replace(",", ", ") + ");"
-        update = (aa, update_code)
+                    assert origin == "P"
+                    phi_map.append(parsed_terms[idx].name)
+            update_conds.append(gen_phi(phi, phi_map))
+        # add conditional univ updates
+        for j, idx in enumerate(gen_dr_update_map):
+            if idx is not None:
+                update_conds.append(ll.Eq(dr_terms[j], parsed_terms[idx]))
+        update_conds_ast = reduce(lambda x, y : ll.And(x, y), update_conds)
+        update_rhs_ast = ll.Or(dr_ast, update_conds_ast)
+        update_code_ast = ia.AssignAction(dr_ast, update_rhs_ast)
+        update = (aa, update_code_ast)
         # gen repr inv
-        repr_inv = "{}({}) <-> ".format(DERIVED_RELATION_NAME, ", ".join(init_vars))
-        ri_vars = []
+        ri_ex_vars = []
         ri_p_vars = []
         j = 65 + len(univs)
-        univs_l = list(univs)
         for v in p.terms:
             if v in exs:
-                ri_vars.append(chr(j))
-                ri_p_vars.append(chr(j))
+                ri_ex_vars.append(ll.Var(chr(j), v.sort))
+                ri_p_vars.append(ll.Var(chr(j), v.sort))
                 j += 1
             else:
-                ri_p_vars.append(init_vars[univs_l.index(v)])
-        if ri_vars:
-            repr_inv += "exists {}. ".format(", ".join(ri_vars))
+                ri_p_vars.append(dr_terms[univs.index(v)])
         # add phi
-        ri_phi = None
-        if phi != il.And():
+        ri_phi_ast = ll.And()
+        if phi != ll.And():
             phi_map = []
             for origin, idx in gen_phi_map:
                 if origin == "PSI":
-                    phi_map.append(init_vars[idx])
-                elif origin == "P":
-                    phi_map.append(ri_p_vars[idx])
+                    phi_map.append(dr_terms[idx].name)
                 else:
-                    assert False
-            ri_phi = str(gen_phi(phi, phi_map)).replace(",", ", ")
-            repr_inv += "{} & ".format(ri_phi)
-        repr_inv += "{}({})".format(p.func, ", ".join(ri_p_vars))
+                    assert origin == "P"
+                    phi_map.append(ri_p_vars[idx].name)
+            ri_phi_ast = gen_phi(phi, phi_map)
+        ri_p_ast = ll.Apply(p.func, *ri_p_vars)
+        ri_rhs = ll.And(ri_phi_ast, ri_p_ast)
+        if ri_ex_vars:
+            ri_rhs = ll.Exists(ri_ex_vars, ri_rhs)
+        repr_inv_ast = ll.Iff(dr_ast, ri_rhs)
         # gen univ repr inv
-        univ_repr_inv = "{}({})".format(DERIVED_RELATION_NAME, ", ".join(init_vars))
-        univ_repr_inv = None
-        if ri_vars:
-            if ri_phi:
-                univ_repr_inv = ri_phi + " & "
-            univ_repr_inv += "{}({}) -> {}({})".format(p.func, ", ".join(ri_p_vars), DERIVED_RELATION_NAME, ", ".join(init_vars))
-        else:
-            univ_repr_inv = repr_inv
-        potential_psis[i] = (univs, exs, phi, p, gen_phi_map, gen_dr_update_map, declaration, init, update, repr_inv, univ_repr_inv)
+        univ_repr_inv_ast = ll.Implies(ll.And(ri_phi_ast, ri_p_ast), dr_ast) if ri_ex_vars else repr_inv_ast
+        potential_psis[i] = (univs, exs, phi, p, gen_phi_map, gen_dr_update_map, declaration_ast, init_ast, update, repr_inv_ast, univ_repr_inv_ast)
 
     # for example
     # print im.module.actions["aaa"] #ivy1.6
@@ -683,29 +672,31 @@ def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, terminals):
             print "\t\tuniv repr inv: {}".format(l[10])
             print ""
         print "\t]"
-        init_empty_relations()
+        import ivy_printer as ip
+        # im.module.actions["bbb"].args.append(aa)
+        # il.sig.symbols[DERIVED_RELATION_NAME] = declaration_ast
+        # ip.print_module(im.module)
 
 def gen_phi(fmla, mp):
-    import logic as ll
     def aux(fmla):
-        if isinstance(fmla, il.And):
+        if isinstance(fmla, ll.And):
             l, r = fmla.args
             lhs = aux(l)
             rhs = aux(r)
-            return il.And(lhs, rhs)
-        if isinstance(fmla, il.Or):
+            return ll.And(lhs, rhs)
+        if isinstance(fmla, ll.Or):
             l, r = fmla.args
             lhs = aux(l)
             rhs = aux(r)
-            return il.Or(lhs, rhs)
+            return ll.Or(lhs, rhs)
         if isinstance(fmla, ll.Eq):
             lhs = aux(fmla.t1)
             rhs = aux(fmla.t2)
             return ll.Eq(lhs, rhs)
-        if isinstance(fmla, il.Not):
+        if isinstance(fmla, ll.Not):
             body = fmla.args[0]
-            return il.Not(aux(body))
-        if isinstance(fmla, il.App):
+            return ll.Not(aux(body))
+        if isinstance(fmla, ll.Apply):
             nt = []
             for t in fmla.terms:
                 name = mp[aux.ctr]
@@ -714,7 +705,7 @@ def gen_phi(fmla, mp):
                 else:
                     nt.append(ll.Const(name, t.sort))
                 aux.ctr += 1
-            return il.App(fmla.func, *nt)
+            return ll.Apply(fmla.func, *nt)
         if isinstance(fmla, ll.Var) or isinstance(fmla, ll.Const):
             name = mp[aux.ctr]
             if name.isupper():
@@ -727,13 +718,12 @@ def gen_phi(fmla, mp):
     return aux(fmla)
 
 def gen_single_update_stmt(exs, phi, p):
-    import logic as ll
     j = 97
     aa_terms = []
     for k in range(len(p.terms)):
         aa_terms.append(ll.Const(chr(j), p.terms[k].sort))
         j += 1
-    aa = ia.AssignAction(ll.Apply(p.func, *aa_terms), il.And())
+    aa = ia.AssignAction(ll.Apply(p.func, *aa_terms), ll.And())
     p_terms_is_ex = [t in exs for t in p.terms]
     for j, t in enumerate(aa.args[0].terms):
         is_mass_update = t.name[0].isupper()
@@ -745,7 +735,7 @@ def gen_single_update_stmt(exs, phi, p):
 
 def parse_single_update_stmt(aa):
     assert isinstance(aa, ia.AssignAction) # must be assignment
-    assert aa.args[1] == il.And() # rhs must be `true`
+    assert aa.args[1] == ll.And() # rhs must be `true`
     return aa.args[0][0], tuple(aa.args[0][1:])
 
 def permute(it):
@@ -755,10 +745,10 @@ def permute(it):
 def top_conj_fmlas(fmla):
     conjs = set()
     def aux(fmla):
-        if isinstance(fmla, il.And):
+        if isinstance(fmla, ll.And):
             # And is left assoc
             l, r = fmla.args
-            if isinstance(r, il.And):
+            if isinstance(r, ll.And):
                 # but there may be unnecessary brackets on the right surrounding an And
                 aux(r)
             else:
@@ -773,11 +763,11 @@ def init_empty_relations():
     # TODO ensure derived relation candidates are initialized to be empty
     all_rels = set()
     empty_rels = set()
-    # print len(im.module.initial_actions) # for ivy1.7, can have multiple init blocks, ivy_action sequence object
-    for ldf in im.module.labeled_inits: # for ivy1.6
-        if not ldf.temporal:
-            # print 'init: {}'.format(ldf.formula)
-            pass
+    # print type(im.module.initial_actions[0].args[0].args[1]) # for ivy1.7, can have multiple init blocks, ivy_action sequence object
+    # for ldf in im.module.labeled_inits: # for ivy1.6
+    #     if not ldf.temporal:
+    #         print 'INITT: {}'.format(ldf.formula)
+    #         pass
 
 def static_relations():
     rels = set("=")
@@ -791,23 +781,21 @@ def static_relations():
 def literals_ast(ast):
     if is_literal(ast):
         yield ast
-        if isinstance(ast, il.Not):
+        if isinstance(ast, ll.Not):
             return
     for arg in ast.args:
         for x in literals_ast(arg):
             yield x
 
 def is_literal(term):
-    import logic as ll
     return (
-        isinstance(term, il.Not) and is_literal(term.body) or
-        isinstance(term, il.App) or
+        isinstance(term, ll.Not) and is_literal(term.body) or
+        isinstance(term, ll.Apply) or
         isinstance(term, ll.Eq) and is_literal(term.t1) and is_literal(term.t2)
     )
 
 def literal_func(lit):
-    import logic as ll
-    if isinstance(lit, il.Not):
+    if isinstance(lit, ll.Not):
         return literal_func(lit.body)
     else:
         if isinstance(lit, ll.Eq):
@@ -841,7 +829,7 @@ def report_arc(arc):
         res += '\n    (position {} is a function from '.format(idx) + str(get_node_sort(v)) + ' to ' + str(term.sort) + ')'
         if term in skolem_map:
             sm = skolem_map[term]
-            res += '\n    ' + str(sm[1].lineno) + 'skolem function defined by:\n         ' + str(sm[0])  
+            res += '\n    ' + str(sm[1].lineno) + 'skolem function defined by:\n         ' + str(sm[0])
     return res
 
 def report_cycle(cycle):
@@ -874,7 +862,7 @@ def check_feu(assumes,asserts,macros):
 
     global var_uniq
     var_uniq = il.VariableUniqifier()
-    
+
     def vupair(p):
         return (var_uniq(p[0]),p[1])
 
@@ -885,7 +873,7 @@ def check_feu(assumes,asserts,macros):
     # Create the stratificaiton graph, as described above.
 
     create_strat_map(assumes,asserts,macros)
-    
+
     # Check for cycles in the stratification graph.
 
     report_cycle(iu.cycle(arcs, first = lambda x: find(x[0]), second = lambda x: find(x[1])))
@@ -899,7 +887,7 @@ def check_feu(assumes,asserts,macros):
     #                         report_interp_over_var(v,app,lf)
     #                 if il.is_app(v) and v.rep in macro_value_map and macro_value_map[v.rep][0] is not None:
     #                     report_interp_over_var(v,app,lf)
-                        
+
 
     # for x,y in strat_map.iteritems():
     #     if isinstance(x,tuple) and (il.is_interpreted_symbol(x[0]) or x[0].name == '='):
@@ -920,7 +908,7 @@ def check_feu(assumes,asserts,macros):
 # the whole it would probably be better to fragment check each prover
 # context separately.
 
-def get_assumes_and_asserts(preconds_only):    
+def get_assumes_and_asserts(preconds_only):
     assumes = []
     asserts = []
     macros = []
@@ -959,7 +947,7 @@ def get_assumes_and_asserts(preconds_only):
 #             foo = ilu.close_epr(ilu.clauses_to_formula(triple[2]))
 # #            print 'ivy_theory.py: foo (2): {}'.format(foo)
 #             assumes.append((foo,action))
-            
+
 
     for ldf in im.module.definitions:
         if not isinstance(ldf.formula,il.DefinitionSchema):
@@ -1005,7 +993,7 @@ def get_assumes_and_asserts(preconds_only):
     #     print 'macro: {}'.format(x[0])
     return assumes,asserts,macros
 
-    
+
 def check_fragment(preconds_only=False):
     if 'fo' not in im.logics():
         assumes,asserts,macros = get_assumes_and_asserts(preconds_only)
