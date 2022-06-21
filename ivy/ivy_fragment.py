@@ -385,64 +385,66 @@ def create_strat_map(assumes,asserts,macros):
 # Show a stratification graph. This is just for debugging.
 
 def show_strat_graph(m,a):
-    print 'universally_quantified_variables : {}\n'.format(sorted([str(v) for v in universally_quantified_variables]))
+    print "universally_quantified_variables : {}\n".format(sorted([str(v) for v in universally_quantified_variables]))
 
-    print 'macro_var_map: {'
+    print "macro_var_map: {"
     for x,y in macro_var_map.iteritems():
-        print '\t{} -> {}'.format(x,y)
-    print '}'
-    print 'macro_dep_map: {'
+        print "\t{} -> {}".format(x,y)
+    print "}"
+    print "macro_dep_map: {"
     for x,y in macro_dep_map.iteritems():
-        print '\t{} -> {}'.format(x,y)
-    print '}'
-    print 'macro_map: {'
+        print "\t{} -> {}".format(x,y)
+    print "}"
+    print "macro_map: {"
     for x,y in macro_map.iteritems():
-        print '\t{} -> {}'.format(x,y)
-    print '}\n'
+        print "\t{} -> {}".format(x,y)
+    print "}\n"
 
-    print 'skolem_map: {'
+    print "skolem_map: {"
     for x,y in skolem_map.iteritems():
-        print '\t{} -> {}'.format(x,y)
-    print '}\n'
+        print "\t{} -> {}".format(x,y)
+    print "}\n"
 
     nodes = set()
     topr = []
-    print 'nodes = {'
+    print "nodes = ["
     for x,y in m.iteritems():
         z = find(y)
         nodes.add(z)
         if isinstance(x,tuple):
-            topr.append('\t({}  |  {}) : {} -> {}'.format(x[0],x[1],y,z))
+            topr.append("\t({}  |  {}) : {} -> {}".format(x[0],x[1],y,z))
         else:
-            topr.append('\t{} : {} -> {}'.format(x,y,z))
+            topr.append("\t{} : {} -> {}".format(x,y,z))
     for n in sorted(topr):
         print n
-    print "}"
+    print "]"
     nodes = sorted(nodes, key=lambda x : x.id)
     nodespr = [str(x.id) + ": " + str(get_node_sort(x)) for x in nodes]
-    print 'UFNodes = ['
+    print "UFNodes = ["
     for n in nodespr:
         print "\t" + n
     print "]"
 
     g = {u: set() for u in nodes}
     arc_fmlas = defaultdict(set)
-    print 'arcs = {'
+    print "arcs = ["
     for arc in a:
         u = find(arc[0])
         v = find(arc[1])
         g[u].add(v)
         arc_fmlas[v].add(tuple(arc[2:]))
-        print '\t({}:{} -> {}:{})\t'.format(u, get_node_sort(arc[0]), v, get_node_sort(arc[1])) + '(' + '  |  '.join(str(x) for x in arc[2:]) + ')'
-    print '}\n'
+        print "\t({}:{} -> {}:{})\t".format(u, get_node_sort(arc[0]), v, get_node_sort(arc[1])) + "(" + "  |  ".join(str(x) for x in arc[2:]) + ")"
+    print "]\n"
 
     cycles = list(simple_cycles(g))
     print(cycles)
+
+    print ""
     cycled_nodes = set(flatten(cycles))
     fmlas_to_check = {}
     for k in arc_fmlas:
         if k in cycled_nodes:
-            print "to " + str(k.id) + ":" + str(get_node_sort(k)) + " = ["
+            print "to {}:{} = [".format(k.id, get_node_sort(k))
             for f in arc_fmlas[k]:
                 print "\t{}  |  line {}  |  {}".format(f[0], f[1].line, f[2])
                 if f[3] not in fmlas_to_check:
@@ -454,10 +456,10 @@ def show_strat_graph(m,a):
     ier = init_empty_relations()
     for k, v in fmlas_to_check.items():
         print "\n\tline {}  |  {}  |  {}".format(v[0], v[1], k)
-        derived_relation(k, set(), sr, v[1])
+        derived_relation(k, set(), sr, ier, v[1])
     print "]"
 
-def derived_relation(fmla, univs, sr, terminals):
+def derived_relation(fmla, univs, sr, ier, terminals):
     if il.is_forall(fmla):
         univs = univs.union(set([v for v in fmla.variables]))
     else:
@@ -468,17 +470,17 @@ def derived_relation(fmla, univs, sr, terminals):
         exs = set([v for v in fmla.variables])
         # TODO this can be relaxed -- only the candidate phi needs to be qf
         if il.is_qf(fmla.body) and univs:
-            derived_relation_aux(fmla.body, univs, exs, sr, terminals)
+            derived_relation_aux(fmla.body, univs, exs, sr, ier, terminals)
     for f in fmla.args:
-        derived_relation(f, univs, sr, terminals)
+        derived_relation(f, univs, sr, ier, terminals)
 
-def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, terminals):
+def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, ier, terminals):
     literals = set(literals_ast(arg_fmla))
     positive_literals = set([f for f in literals if not isinstance(f, ll.Not)])
     static_literals = set([f for f in literals if literal_func(f) in sr])
     tcf = top_conj_fmlas(arg_fmla)
     # the derived relation candidate must be positive, cannot be an axiom, must be a top-level conj, must initially be empty
-    potential_ps = [x for x in positive_literals - static_literals if x in tcf]
+    potential_ps = [l for l in positive_literals - static_literals if l in tcf and literal_func(l) in ier]
     # phi can only contain static relations
     base_phis = [f for f in tcf if all(l in static_literals for l in literals_ast(f))]
     potential_phis = [reduce(lambda x, y : ll.And(x, y), l) for l in permute(base_phis)]
@@ -643,14 +645,10 @@ def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, terminals):
         # gen univ repr inv
         univ_repr_inv_ast = ll.Implies(ll.And(ri_phi_ast, ri_p_ast), dr_ast) if ri_ex_vars else repr_inv_ast
         potential_psis[i] = (univs, exs, phi, p, gen_phi_map, gen_dr_update_map, declaration_ast, init_ast, update, repr_inv_ast, univ_repr_inv_ast)
-
     # for example
     # print im.module.actions["aaa"] #ivy1.6
     # print im.module.actions["bbb"] #ivy1.7
     # print type(im.module.actions["bbb"].args[1].args[2].args[1].args[0].terms[3])
-
-    # TODO support removal of elements
-
     if potential_psis:
         print "\tuniv vars: " + str([str(v) for v in arg_univs])
         print "\tex vars: " + str([str(v) for v in arg_exs])
@@ -676,6 +674,8 @@ def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, terminals):
         # im.module.actions["bbb"].args.append(aa)
         # il.sig.symbols[DERIVED_RELATION_NAME] = declaration_ast
         # ip.print_module(im.module)
+
+    # TODO support removal of elements
 
 def gen_phi(fmla, mp):
     def aux(fmla):
@@ -712,8 +712,7 @@ def gen_phi(fmla, mp):
                 return ll.Var(name, fmla.sort)
             else:
                 return ll.Const(name, fmla.sort)
-        print type(fmla)
-        assert False
+        assert False, type(fmla)
     aux.ctr = 0
     return aux(fmla)
 
@@ -746,37 +745,67 @@ def top_conj_fmlas(fmla):
     conjs = set()
     def aux(fmla):
         if isinstance(fmla, ll.And):
-            # And is left assoc
-            l, r = fmla.args
-            if isinstance(r, ll.And):
-                # but there may be unnecessary brackets on the right surrounding an And
-                aux(r)
-            else:
-                conjs.add(r)
-            aux(l)
+            # And is left assoc in ivy1.6
+            for f in fmla.args[1:]:
+                if isinstance(f, ll.And):
+                    # but there may be unnecessary brackets on the right surrounding an And
+                    aux(f)
+                else:
+                    conjs.add(f)
+            aux(fmla.args[0])
         else:
             conjs.add(fmla)
     aux(fmla)
     return conjs
 
 def init_empty_relations():
-    # TODO ensure derived relation candidates are initialized to be empty
-    all_rels = set()
     empty_rels = set()
-    # print type(im.module.initial_actions[0].args[0].args[1]) # for ivy1.7, can have multiple init blocks, ivy_action sequence object
-    # for ldf in im.module.labeled_inits: # for ivy1.6
-    #     if not ldf.temporal:
-    #         print 'INITT: {}'.format(ldf.formula)
-    #         pass
+    # ivy1.6
+    for ldf in im.module.labeled_inits:
+        if not ldf.temporal:
+            fmla = ldf.formula
+            if isinstance(fmla, ll.Not):
+                body = fmla.body
+                assert isinstance(body, ll.Apply)
+                if all(v.name.isupper() for v in body.terms):
+                    empty_rels.add(body.func.name)
+            else:
+                assert isinstance(fmla, ll.Apply)
+                empty_rels.discard(fmla.func.name)
+    # ivy1.7
+    symbols = il.sig.symbols
+    for seq in im.module.initial_actions:
+        for action in seq.args:
+            if isinstance(action, ia.AssignAction):
+                l, r = action.args
+                assert l.func.name in symbols
+                const = symbols[l.func.name]
+                assert isinstance(const, ll.Const)
+                fs = const.sort
+                assert isinstance(fs, ll.FunctionSort)
+                flag1 = fs[-1] == ll.Boolean # must be a relation
+                flag2 = r == ll.Or() # rhs must be `false`
+                flag3 = all(v.name.isupper() for v in l.terms) # must be for the entire relation
+                if flag1 and flag2 and flag3:
+                    empty_rels.add(l.func.name)
+                elif flag1 and flag2 and l.func.name in empty_rels:
+                    # we can relax flag3 if the rhs is just `false` and all three
+                    # conditions were previously already satisfied
+                    pass
+                else:
+                    # if any of the above fail, then rm from set, since multiple
+                    # assignments to the relation can exist and a later one can
+                    # overwrite a prior empty initialization
+                    empty_rels.discard(l.func.name)
+    return empty_rels
 
 def static_relations():
-    rels = set("=")
+    static_rels = set("=")
     for ldf in im.module.labeled_axioms:
         if not ldf.temporal:
-            # print 'axiom: {}'.format(ldf.formula)
             for f in literals_ast(ldf.formula):
-                rels.add(literal_func(f))
-    return rels
+                static_rels.add(literal_func(f))
+    return static_rels
 
 def literals_ast(ast):
     if is_literal(ast):
@@ -801,7 +830,7 @@ def literal_func(lit):
         if isinstance(lit, ll.Eq):
             return "="
         else:
-            return lit.func
+            return lit.func.name
 
 def flatten(l):
     return [x for xs in l for x in xs]
