@@ -10,13 +10,12 @@ from johnson import simple_cycles
 
 def derived_relations_rewrite(strat_map, arcs, print_arcs=False, print_drs=False):
     def pra(s):
-        if print_arcs:
-            print(s)
+        print(s) if print_arcs else None
 
     def prd(s):
-        if print_drs:
-            print(s)
+        print(s) if print_drs else None
 
+    # print all nodes
     nodes = set()
     pra("nodes = [")
     for x, y in strat_map.iteritems():
@@ -28,58 +27,63 @@ def derived_relations_rewrite(strat_map, arcs, print_arcs=False, print_drs=False
             pra("\t{} : {} -> {}".format(x, y, z))
     pra("]\n")
 
+    # print all equivalence classes
     nodes = sorted(nodes, key=lambda x: x.id)
     pra("UFNodes = [")
     [pra("\t{}: {}".format(x.id, get_node_sort(strat_map, x))) for x in nodes]
     pra("]\n")
 
+    # construct an adjacency list stratification graph of the equivalence classes in g
+    # arc_fmlas: terminal node of the arc -> fmla details that contributed this arc
+    # arc_fmlas: closed fmla -> set(origin, origin sort, terminal, terminal sort, relation, location, line, polarity)
     g = {u: set() for u in nodes}
     arc_fmlas = defaultdict(set)
     pra("arcs = [")
     for arc in arcs:
-        u = find(arc[0])
-        v = find(arc[1])
-        g[u].add(v)
-        arc_fmlas[v].add(tuple(arc[2:]))
-        pra("\t{}:{} -> {}:{}".format(u, get_node_sort(strat_map, arc[0]), v, get_node_sort(strat_map, arc[1])))
+        origin = find(arc[0])
+        origin_sort = get_node_sort(strat_map, origin)
+        terminal = find(arc[1])
+        terminal_sort = get_node_sort(strat_map, terminal)
+        relation = arc[2]
+        line = arc[3].line
+        location = arc[4]
+        closed_fmla = arc[5]
+        polarity = arc[6]
+        g[origin].add(terminal)
+        arc_fmlas[closed_fmla].add((origin, origin_sort, terminal, terminal_sort, relation, location, line, polarity))
+        pra("\t{}:{} -> {}:{}".format(origin, origin_sort, terminal, terminal_sort))
         pra("\t{}".format("  |  ".join(str(x) for x in arc[2:])))
     pra("]\n")
 
-    cycles = sorted(list(simple_cycles(g)), key=lambda x: len(x))
-    pra("UF cycles: [")
-    for c in cycles:
-        s = []
-        for n in c:
-            s.append("{}:{}".format(n.id, get_node_sort(strat_map, n)))
-        pra("\t{}".format(" -> ".join(s + [s[0]])))
-    pra("]\n")
+    # compute and print all cycles in the stratification graph
+    if print_arcs:
+        cycles = sorted(list(simple_cycles(g)), key=lambda x: len(x))
+        pra("UF cycles: [")
+        for c in cycles:
+            s = []
+            for n in c:
+                s.append("{}:{}".format(n.id, get_node_sort(strat_map, n)))
+            pra("\t{}".format(" -> ".join(s + [s[0]])))
+        pra("]\n")
 
-    cycled_nodes = set(flatten(cycles))
-    fmlas_to_check = {}
-    for fs in arc_fmlas:
-        if fs in cycled_nodes:
-            pra("to {}:{} = [".format(fs.id, get_node_sort(strat_map, fs)))
-            for f in arc_fmlas[fs]:
-                rel = f[0]
-                line = f[1].line
-                fmla = f[2]
-                close_fmla = f[3]
-                pra("\t{}  |  line {}  |  {}".format(rel, line, fmla))
-                if close_fmla not in fmlas_to_check:
-                    fmlas_to_check[close_fmla] = (line, set())
-                fmlas_to_check[close_fmla][1].add(get_node_sort(strat_map, fs).name)
-            pra("]")
-
-    prd("\nderived relations = [")
+    # compute derived relations for each arc fmla
+    # Each fmla is only evaluated once by this procedure (i.e., it is only scanned once for all potential derived relations). In order to optimize the choice of derived relation parts, we first collect aggregate information about this formula and its contributions to the stratification graph. In particular, we collect the relevant vocabulary (relation + location) of each terminal arc, since we will ensure that derived relations only eliminate exs that contribute to cycling vocabularies.
     sr = static_relations()
     ier = init_empty_relations()
-    for f, (line, terminals) in fmlas_to_check.items():
-        prd("\n\tline {}  |  {}  |  {}".format(line, terminals, f))
-        derived_relation(f, set(), sr, ier, terminals, print_drs)
+    prd("\nderived relations = [")
+    for fmla, infos in arc_fmlas.items():
+        cycling_vocabs = set()
+        ins = list(infos)
+        for info in ins:
+            origin, origin_sort, terminal, terminal_sort, relation, location, line, polarity = info
+            assert line == ins[0][6]  # sanity check, this fmla refers to a single point in the code
+            cycling_vocabs.add((literal_func(relation), location))
+        prd("\n\tline {}  |  {}  |  {}".format(line, "positive" if polarity else "negative", fmla))
+        derived_relation(fmla, set(), sr, ier, cycling_vocabs, print_drs)
     prd("]")
 
 
-def derived_relation(fmla, univs, sr, ier, terminals, print_drs):
+def derived_relation(fmla, univs, sr, ier, cycling_vocabs, print_drs):
     if il.is_forall(fmla):
         univs = univs.union(set([v for v in fmla.variables]))
     else:
@@ -87,28 +91,38 @@ def derived_relation(fmla, univs, sr, ier, terminals, print_drs):
         if not [v for v in ilu.variables_ast(fmla) if v in univs]:
             univs = set()
     if il.is_exists(fmla):
-        exs = set([v for v in fmla.variables])
         # TODO this can be relaxed -- only the candidate phi needs to be qf
         if il.is_qf(fmla.body) and univs:
-            derived_relation_aux(fmla.body, univs, exs, sr, ier, terminals, print_drs)
+            exs = set([v for v in fmla.variables])
+            derived_relation_aux(fmla.body, univs, exs, sr, ier, cycling_vocabs, print_drs)
     for f in fmla.args:
-        derived_relation(f, univs, sr, ier, terminals, print_drs)
+        derived_relation(f, univs, sr, ier, cycling_vocabs, print_drs)
 
 
-def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, ier, terminals, print_drs):
+def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, ier, cycling_vocabs, print_drs):
     def prd(s):
-        if print_drs:
-            print(s)
+        print(s) if print_drs else None
 
     literals = set(literals_ast(arg_fmla))
     positive_literals = set([f for f in literals if not isinstance(f, ll.Not)])
     static_literals = set([f for f in literals if literal_func(f) in sr])
     tcf = top_conj_fmlas(arg_fmla)
-    # the derived relation candidate must be positive, cannot be an axiom, must be a top-level conj, must initially be empty
-    potential_ps = [l for l in positive_literals - static_literals if l in tcf and literal_func(l) in ier]
+    cycling_vocab_rels = set([v[0] for v in cycling_vocabs])
+    # the derived relation candidate must be:
+    potential_ps = []
+    for l in literals:
+        name = literal_func(l)
+        flag1 = l in positive_literals  # positive
+        flag2 = l not in static_literals  # cannot be an axiom
+        flag3 = l in tcf  # to-level conj
+        flag4 = name in ier  # initially empty
+        flag5 = name in cycling_vocab_rels  # contributes to strat graph
+        if flag1 and flag2 and flag3 and flag4 and flag5:
+            potential_ps.append(l)
     # phi can only contain static relations
     base_phis = [f for f in tcf if all(l in static_literals for l in literals_ast(f))]
-    potential_phis = [reduce(lambda x, y: ll.And(x, y), l) for l in permute(base_phis)]
+    potential_phis = [ll.And(*l) for l in permute(base_phis)]
+
     # generate all possible quantifiers
     # There can be multiple quantifier choices here because ex variables under p
     # can be universal. That being said, ex cannot be empty. A greedy approach to
@@ -126,14 +140,45 @@ def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, ier, terminals, print
     #   - can phi contain local vars -> psi univs? -- not allowed currently
     #   - psi_univs contains all univs under phi and p and any local vars under p
     #   - psi_exs begins with all other vars, reduces down till only a single var
-    # TODO discard other useless options, such as those that coincide with an edge from an axiom
+    # optimize choice of psi
+    #   - discard those with exs that don't all address cycles
     potential_psis = []
 
     def add_psi(univs, us, ps, exs, phi, p):
         psi_univs = list(univs.union(us).union(ps))
         psi_exs = exs - us
-        flag1 = psi_univs  # a derived relation is formable
-        flag2 = len(terminals - set([v.sort.name for v in psi_exs])) < len(terminals)  # addresses a cycle
+        flag1 = psi_univs != []  # a derived relation is formable
+        # each ex must be cycling in phi or p -- this helps to reduce extra valid options that don't help to reduce the strat graph -- no need to worry about "missing" options since we permute over all combinations so this will extract all helpful quantifier options
+        phi_vars = list(ilu.variables_ast(phi))
+        phi_var_map = {v: i for i, v in enumerate(phi_vars)}
+        p_var_map = {v: i for i, v in enumerate(ilu.variables_ast(p))}
+        p_name = literal_func(p)
+        flag2 = True
+        for v in psi_exs:
+            in_p = (p_name, p_var_map.get(v, -1)) in cycling_vocabs
+            in_phi = False
+            if v in phi_var_map:
+                phis = []
+                for la in literals_ast(phi):
+                    l = literal_app_ast(la)
+                    # TODO ensure this is actually true, deal with nested ast, functions, equality
+                    assert isinstance(l, ll.Apply), type(l)
+                    phis.append((l.func.name, len(l.terms)))
+                loc = phi_var_map[v]
+                ctr = 0
+                rel = None
+                for r, l in phis:
+                    tmp = ctr + l
+                    if ctr <= loc and loc < tmp:
+                        rel = r
+                        ctr = loc - ctr
+                        break
+                    ctr = tmp
+                assert rel is not None
+                in_phi = (rel, ctr) in cycling_vocabs
+            if not in_p and not in_phi:
+                flag2 = False
+                break
         if flag1 and flag2:
             # generate arity mapping for update code
             psi_umap = {v: i for i, v in enumerate(psi_univs)}
@@ -141,7 +186,7 @@ def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, ier, terminals, print
             # map phi [i -> (origin, j)]:
             # index i of phi is taken from index j from origin p or psi
             gen_phi_map = []
-            for v in ilu.variables_ast(phi):
+            for v in phi_vars:
                 if v in psi_umap:
                     gen_phi_map.append(("PSI", psi_umap[v]))
                 else:
@@ -152,10 +197,10 @@ def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, ier, terminals, print
             potential_psis.append((psi_univs, psi_exs, phi, p, gen_phi_map, gen_dr_update_map))
 
     for p in potential_ps:
-        p_vars = set([v for v in ilu.variables_ast(p)])
+        p_vars = set(ilu.variables_ast(p))
         p_univs = set([v for v in p_vars if v in arg_univs])
         p_exs = set([v for v in p_vars if v in arg_exs])
-        p_locals = set([c for c in ilu.constants_ast(p)])
+        p_locals = set(ilu.constants_ast(p))
         # consider a vacuous phi
         # moving no vars
         add_psi(p_univs, set(), p_locals, p_exs, ll.And(), p)
@@ -165,10 +210,10 @@ def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, ier, terminals, print
             add_psi(p_univs, us, p_locals, p_exs, ll.And(), p)
         # non-empty phis
         for phi in potential_phis:
-            phi_vars = set([v for v in ilu.variables_ast(phi)])
+            phi_vars = set(ilu.variables_ast(phi))
             phi_univs = set([v for v in phi_vars if v in arg_univs])
             phi_exs = set([v for v in phi_vars if v in arg_exs])
-            phi_locals = set([c for c in ilu.constants_ast(phi)])
+            phi_locals = set(ilu.constants_ast(phi))
             all_univs = phi_univs.union(p_univs)
             all_exs = phi_exs.union(p_exs)
             # moving no vars
@@ -238,8 +283,7 @@ def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, ier, terminals, print
         for j, idx in enumerate(gen_dr_update_map):
             if idx is not None:
                 update_conds.append(ll.Eq(dr_terms[j], parsed_terms[idx]))
-        update_conds_ast = reduce(lambda x, y: ll.And(x, y), update_conds)
-        update_rhs_ast = ll.Or(dr_ast, update_conds_ast)
+        update_rhs_ast = ll.Or(dr_ast, ll.And(*update_conds))
         update_code_ast = ia.AssignAction(dr_ast, update_rhs_ast)
         update = (aa, update_code_ast)
         # gen repr inv
@@ -286,9 +330,10 @@ def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, ier, terminals, print
         prd("\tpositive literals: " + str([str(l) for l in positive_literals]))
         prd("\tstatic literals: " + str([str(l) for l in static_literals]))
         prd("\ttop-level conjs: " + str([str(l) for l in tcf]))
+        prd("\tcycling vocabs: " + str(["{}:{}".format(r[0], r[1]) for r in cycling_vocabs]))
         prd("\tpotential ps: " + str([str(l) for l in potential_ps]))
         prd("\tpotential phis: " + str([str(l) for l in potential_phis]))
-        prd("\tpotential psis: [")
+        prd("\tpotential psis ({}): [".format(len(potential_psis)))
         for l in potential_psis:
             prd("\t\tunivs: {}  |  exs: {}".format(", ".join(map(lambda x: str(x), l[0])),
                                                    ", ".join(map(lambda x: str(x), l[1]))))
@@ -311,19 +356,11 @@ def derived_relation_aux(arg_fmla, arg_univs, arg_exs, sr, ier, terminals, print
 def gen_phi(fmla, mp):
     def aux(fmla):
         if isinstance(fmla, ll.And):
-            l, r = fmla.args
-            lhs = aux(l)
-            rhs = aux(r)
-            return ll.And(lhs, rhs)
+            return ll.And(*[aux(f) for f in fmla.args])
         if isinstance(fmla, ll.Or):
-            l, r = fmla.args
-            lhs = aux(l)
-            rhs = aux(r)
-            return ll.Or(lhs, rhs)
+            return ll.Or(*[aux(f) for f in fmla.args])
         if isinstance(fmla, ll.Eq):
-            lhs = aux(fmla.t1)
-            rhs = aux(fmla.t2)
-            return ll.Eq(lhs, rhs)
+            return ll.Eq(aux(fmla.t1), aux(fmla.t2))
         if isinstance(fmla, ll.Not):
             body = fmla.args[0]
             return ll.Not(aux(body))
@@ -383,13 +420,12 @@ def top_conj_fmlas(fmla):
     def aux(fmla):
         if isinstance(fmla, ll.And):
             # And is left assoc in ivy1.6
-            for f in fmla.args[1:]:
+            # there may also be unnecessary brackets
+            for f in fmla.args:
                 if isinstance(f, ll.And):
-                    # but there may be unnecessary brackets on the right surrounding an And
                     aux(f)
                 else:
                     conjs.add(f)
-            aux(fmla.args[0])
         else:
             conjs.add(fmla)
 
@@ -465,18 +501,19 @@ def is_literal(term):
     return flag1 or flag2 or flag3
 
 
-def literal_func(lit):
+def literal_app_ast(lit):
     if isinstance(lit, ll.Not):
-        return literal_func(lit.body)
+        return literal_app_ast(lit.body)
     else:
-        if isinstance(lit, ll.Eq):
-            return "="
-        else:
-            return lit.func.name
+        return lit
 
 
-def flatten(l):
-    return [x for xs in l for x in xs]
+def literal_func(lit):
+    ast = literal_app_ast(lit)
+    if isinstance(ast, ll.Eq):
+        return "="
+    else:
+        return ast.func.name
 
 
 def get_node_sort(strat_map, n):  # from ivy_fragment

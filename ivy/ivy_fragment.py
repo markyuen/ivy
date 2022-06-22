@@ -85,7 +85,7 @@ from derived_relations import derived_relations_rewrite
 # even number, one for an odd number and None if the formula occurs
 # under both an even number and an odd number of negations.
 
-def map_fmla(lineno,fmla,pol,orig):
+def map_fmla(lineno,fmla,pol,orig,mypol):
     """ Add all of the subterms of `fmla` to the stratification graph. """
 
     global universally_quantified_variables
@@ -97,7 +97,7 @@ def map_fmla(lineno,fmla,pol,orig):
     global arcs
 
     if il.is_binder(fmla):
-        return map_fmla(lineno,fmla.body,pol,orig)
+        return map_fmla(lineno,fmla.body,pol,orig,mypol)
     if il.is_variable(fmla):
         if fmla in universally_quantified_variables:
             if fmla not in strat_map:
@@ -107,7 +107,7 @@ def map_fmla(lineno,fmla,pol,orig):
             return strat_map[fmla],set()
         node,vs = macro_var_map.get(fmla,None), macro_dep_map.get(fmla,set())
         return node,vs
-    reses = [map_fmla(lineno,f,il.polar(fmla,pos,pol),orig) for pos,f in enumerate(fmla.args)]
+    reses = [map_fmla(lineno,f,il.polar(fmla,pos,pol),orig,mypol) for pos,f in enumerate(fmla.args)]
     nodes,uvs = iu.unzip_pairs(reses)
     all_uvs = iu.union_of_list(uvs)
     all_uvs.update(n for n in nodes if n is not None)
@@ -117,7 +117,7 @@ def map_fmla(lineno,fmla,pol,orig):
             for x,uv in zip(nodes,uvs):
                 if x is not None:
                     unify(x,S_sigma)
-                arcs.extend((v,S_sigma,fmla,lineno,"NA",orig) for v in uv)
+                arcs.extend((v,S_sigma,fmla,lineno,"NA",orig,mypol) for v in uv)
         else:
             check_interpreted(fmla,nodes,uvs,lineno,pol)
         return None,all_uvs
@@ -138,14 +138,14 @@ def map_fmla(lineno,fmla,pol,orig):
                 return macro_value_map[func]
             if func in macro_map:
                 defn,lf = macro_map[func]
-                res = map_fmla(lf.lineno,defn.rhs(),None,orig)
+                res = map_fmla(lf.lineno,defn.rhs(),None,orig,mypol)
                 macro_value_map[func] = res
                 return res
             for idx,node in enumerate(nodes):
                 anode = strat_map[(func,idx)]
                 if node is not None:
                     unify(anode,node)
-                arcs.extend((v,anode,fmla,lineno,idx,orig) for v in uvs[idx])
+                arcs.extend((v,anode,fmla,lineno,idx,orig,mypol) for v in uvs[idx])
         else:
             check_interpreted(fmla,nodes,uvs,lineno,pol)
         return None,all_uvs
@@ -373,8 +373,10 @@ def create_strat_map(assumes,asserts,macros):
     # of the formulas in the VC. We don't include the macro definitions
     # here, because these are 'inlined' by `map_fmla`.
 
-    for pair in assumes+asserts:
-        map_fmla(pair[1].lineno,pair[0],0,il.close_formula(pair[0]))
+    for pair in assumes:
+        map_fmla(pair[1].lineno,pair[0],0,il.close_formula(pair[0]),True)
+    for pair in asserts:
+        map_fmla(pair[1].lineno,pair[0],0,il.close_formula(pair[0]),False)
 
     show_strat_graph = True
     show_drs = True
